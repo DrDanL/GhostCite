@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GhostCite</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 2rem auto; max-width: 1000px; color: #222; line-height: 1.5; }
+      h1 { color: #333; margin-bottom: 0.2rem; }
+      h2 { color: #444; border-bottom: 2px solid #eee; padding-bottom: 0.4rem; margin-top: 2rem; }
+      h3 { color: #555; margin-top: 1.5rem; }
+      .subtitle { color: #666; margin-top: 0; }
+      .error { color: #b00020; font-weight: bold; }
+      .ok { color: #0a7a31; font-weight: bold; }
+      .bad { color: #b00020; font-weight: bold; }
+      .warn { color: #e65100; font-weight: bold; }
+
+      /* Report card */
+      .report-card {
+        margin: 1.5rem 0; padding: 1.5rem; background: #fafafa;
+        border: 1px solid #e0e0e0; border-radius: 8px;
+      }
+      .report-header {
+        display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;
+      }
+      .report-header h2 { border: none; margin: 0; padding: 0; }
+      .report-grade {
+        font-size: 2rem; font-weight: bold; padding: 0.5rem 1rem;
+        border-radius: 8px; min-width: 60px; text-align: center;
+      }
+      .grade-high { background: #e8f5e9; color: #2e7d32; }
+      .grade-medium { background: #fff3e0; color: #e65100; }
+      .grade-low { background: #ffebee; color: #c62828; }
+
+      .stats-grid {
+        display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 1rem; margin: 1rem 0;
+      }
+      .stat-box {
+        background: #fff; border: 1px solid #e0e0e0; border-radius: 6px;
+        padding: 1rem; text-align: center;
+      }
+      .stat-box .stat-value { font-size: 1.8rem; font-weight: bold; }
+      .stat-box .stat-label { font-size: 0.85rem; color: #666; margin-top: 0.3rem; }
+
+      .progress-bar-container {
+        background: #eee; border-radius: 4px; height: 24px; margin: 1rem 0; overflow: hidden;
+        display: flex;
+      }
+      .progress-verified { background: #4caf50; height: 100%; transition: width 0.3s; }
+      .progress-unverified { background: #f44336; height: 100%; transition: width 0.3s; }
+
+      .assessment {
+        padding: 1rem; border-radius: 6px; margin: 1rem 0;
+        border-left: 4px solid #1a73e8; background: #e3f2fd;
+      }
+
+      /* Table */
+      table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+      th, td { border: 1px solid #ddd; text-align: left; padding: 0.5rem; vertical-align: top; }
+      th { background: #f9f9f9; }
+      .ref-text { max-width: 400px; word-break: break-word; font-size: 0.85em; }
+      .doi-link { font-size: 0.8em; color: #1a73e8; }
+      tr.row-ok { background: #f1f8e9; }
+      tr.row-bad { background: #fce4ec; }
+
+      /* Buttons */
+      .download-btn {
+        display: inline-block; margin: 1rem 0.5rem 1rem 0; padding: 0.6rem 1.2rem;
+        background: #1a73e8; color: #fff; text-decoration: none;
+        border-radius: 4px; font-weight: bold;
+      }
+      .download-btn:hover { background: #1557b0; }
+
+      .upload-area {
+        border: 2px dashed #ccc; border-radius: 8px; padding: 2rem;
+        text-align: center; margin: 1rem 0; background: #fafafa;
+      }
+      .upload-area input[type="file"] { margin: 0.5rem 0; }
+      .upload-area button {
+        margin-top: 0.5rem; padding: 0.6rem 1.5rem; font-size: 1rem;
+        background: #1a73e8; color: #fff; border: none; border-radius: 4px;
+        cursor: pointer; font-weight: bold;
+      }
+      .upload-area button:hover { background: #1557b0; }
+
+      .footer { margin-top: 3rem; color: #999; font-size: 0.8rem; text-align: center; }
+
+      .disclosure {
+        background: #fff8e1; border: 1px solid #ffe082; border-left: 4px solid #ffa000;
+        border-radius: 6px; padding: 1rem 1.2rem; margin: 1rem 0; font-size: 0.9em;
+        line-height: 1.6; color: #5d4037;
+      }
+
+      .partial { color: #e65100; font-weight: bold; }
+      .partial-detail { font-size: 0.8em; color: #e65100; margin-top: 0.2rem; }
+      tr.row-partial { background: #fff3e0; }
+    </style>
+  </head>
+  <body>
+    <h1>👻 GhostCite</h1>
+    <p class="subtitle">Reference verification tool — upload a PDF or Word document to check if cited references exist in Crossref.</p>
+
+    <div class="disclosure">
+      <strong>⚠ Important:</strong> This tool checks whether references can be found in the <a href="https://www.crossref.org/" target="_blank">Crossref</a> database. A reference marked as "not found" does <strong>not</strong> mean it is fake or fabricated — many legitimate sources (books, reports, websites, preprints, and non-English publications) are not indexed by Crossref. Similarly, a "partial match" indicates that some but not all metadata aligns with a Crossref record, which may reflect formatting differences rather than errors. <strong>All results require human verification</strong> and should not be used as the sole basis for judging the integrity of a document's references.
+    </div>
+
+    <form method="post" enctype="multipart/form-data">
+      <div class="upload-area">
+        <p><strong>Upload a PDF or Word (.docx) document</strong></p>
+        <input type="file" name="document" accept="application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" required />
+        <br />
+        <button type="submit">🔍 Analyse References</button>
+      </div>
+    </form>
+
+    {% if error %}
+      <p class="error">⚠ {{ error }}</p>
+    {% endif %}
+
+    {% if results %}
+      {% set verified = results | selectattr('matched') | rejectattr('partial_match') | list | length %}
+      {% set partial = results | selectattr('partial_match') | list | length %}
+      {% set unverified = results | rejectattr('matched') | rejectattr('partial_match') | list | length %}
+      {% set total = results | length %}
+      {% set pct = ((verified / total) * 100) | round(1) if total > 0 else 0 %}
+
+      <!-- ===== REPORT CARD ===== -->
+      <div class="report-card">
+        <div class="report-header">
+          <h2>📋 Verification Report</h2>
+          <div class="report-grade {% if pct >= 80 %}grade-high{% elif pct >= 50 %}grade-medium{% else %}grade-low{% endif %}">
+            {{ pct }}%
+          </div>
+        </div>
+
+        <!-- Stats -->
+        <div class="stats-grid">
+          <div class="stat-box">
+            <div class="stat-value">{{ total }}</div>
+            <div class="stat-label">References Found</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value ok">{{ verified }}</div>
+            <div class="stat-label">Verified in Crossref</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value warn">{{ partial }}</div>
+            <div class="stat-label">Partial Match</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value bad">{{ unverified }}</div>
+            <div class="stat-label">Not Found</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value">{{ pct }}%</div>
+            <div class="stat-label">Verification Rate</div>
+          </div>
+        </div>
+
+        <!-- Progress bar -->
+        {% set partial_pct = ((partial / total) * 100) | round(1) if total > 0 else 0 %}
+        {% set unverified_pct = ((unverified / total) * 100) | round(1) if total > 0 else 0 %}
+        <div class="progress-bar-container">
+          <div class="progress-verified" style="width: {{ pct }}%"></div>
+          <div style="background: #ff9800; height: 100%; width: {{ partial_pct }}%"></div>
+          <div class="progress-unverified" style="width: {{ unverified_pct }}%"></div>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 0.8rem; color: #666;">
+          <span>✓ Verified ({{ verified }})</span>
+          <span>⚠ Partial ({{ partial }})</span>
+          <span>✗ Not found ({{ unverified }})</span>
+        </div>
+
+        <!-- Assessment -->
+        <div class="assessment">
+          <strong>Assessment:</strong>
+          {% if pct >= 90 %}
+            The vast majority of references appear to be legitimate publications registered with Crossref. This document has a high reference integrity score.
+          {% elif pct >= 70 %}
+            Most references were verified, but some could not be found in Crossref. These may be preprints, books, web resources, or potentially fabricated citations.
+          {% elif pct >= 50 %}
+            A significant portion of references could not be verified. Manual review is recommended for unverified citations.
+          {% else %}
+            A majority of references could not be verified in Crossref. This may indicate issues with citation quality, or the references may be from sources not indexed by Crossref (books, websites, etc.). Careful manual review is strongly recommended.
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Download -->
+      {% if download_id %}
+        <a class="download-btn" href="/download/{{ download_id }}">⬇ Download Summary PDF</a>
+      {% endif %}
+
+      <!-- ===== DETAILED RESULTS TABLE ===== -->
+      <h2>📖 Detailed Results</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Reference</th>
+            <th>Status</th>
+            <th>Crossref Match</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for result in results %}
+            <tr class="{% if result.partial_match %}row-partial{% elif result.matched %}row-ok{% else %}row-bad{% endif %}">
+              <td>{{ loop.index }}</td>
+              <td class="ref-text">{{ result.reference }}</td>
+              <td>
+                {% if result.partial_match %}
+                  <span class="partial">⚠ Partial match</span>
+                  {% if result.partial_match_details %}
+                    <div class="partial-detail">{{ result.partial_match_details }}</div>
+                  {% endif %}
+                {% elif result.matched %}
+                  <span class="ok">✓ Verified</span>
+                {% else %}
+                  <span class="bad">✗ Not found</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if result.title %}<div><strong>Title:</strong> {{ result.title }}</div>{% endif %}
+                {% if result.doi %}<div class="doi-link"><strong>DOI:</strong> <a href="https://doi.org/{{ result.doi }}" target="_blank">{{ result.doi }}</a></div>{% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <!-- ===== UNVERIFIED REFERENCES SECTION ===== -->
+      {% if unverified > 0 %}
+        <h3>⚠ Unverified References ({{ unverified }})</h3>
+        <p style="color: #666; font-size: 0.9em;">These references could not be matched in Crossref. They may be fabricated, incorrectly formatted, or from sources not indexed by Crossref (books, websites, grey literature).</p>
+        <ol>
+          {% for result in results %}
+            {% if not result.matched %}
+              <li style="margin-bottom: 0.5rem; font-size: 0.9em;">
+                {{ result.reference }}
+                {% if result.doi %}<br /><span class="doi-link">Attempted DOI: {{ result.doi }}</span>{% endif %}
+              </li>
+            {% endif %}
+          {% endfor %}
+        </ol>
+      {% endif %}
+    {% endif %}
+
+    <div class="footer">
+      <p>GhostCite v0.2 — References checked against <a href="https://www.crossref.org/" target="_blank">Crossref</a>. Results are indicative; absence from Crossref does not confirm fabrication.</p>
+    </div>
+  </body>
+</html>
