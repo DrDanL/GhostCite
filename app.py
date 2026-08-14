@@ -116,13 +116,17 @@ _AUTHOR_YEAR_RE = re.compile(
     r")"
 )
 
-REFERENCE_HEADINGS = {
-    "references",
-    "bibliography",
-    "works cited",
-    "literature cited",
-    "reference list",
-}
+# A heading is only treated as the start of the reference section when it is
+# in the final half of the document.  This avoids matching a table of contents
+# or prose such as "References to prior work..." near the beginning.
+REFERENCE_SECTION_TAIL_FRACTION = 0.5
+REFERENCE_HEADING_RE = re.compile(
+    r"^(?:(?:section|chapter)\s+)?"
+    r"(?:\d+(?:\.\d+)*[.)]?\s+)?"
+    r"(?P<heading>references|bibliography|works\s+cited|literature\s+cited|reference\s+list)"
+    r"\s*(?:[:\-\u2013\u2014]\s*)?(?P<remainder>.*)$",
+    re.IGNORECASE,
+)
 
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
@@ -141,31 +145,46 @@ def _strip_page_number(line: str) -> str:
     return re.sub(r"^\d{1,4}\s{2,}", "", line)
 
 
+def _looks_like_reference_start(text: str) -> bool:
+    """Return whether text plausibly starts an actual reference entry."""
+    return (
+        any(pattern.match(text) for pattern in REF_START_PATTERNS)
+        or _AUTHOR_YEAR_RE.match(text) is not None
+        or DOI_PATTERN.search(text) is not None
+    )
+
+
 def find_reference_section(text: str) -> str:
-    """Extract only the reference section text from the full document text.
+    """Extract the reference section from the end of the document.
 
     Handles cases where the heading and references are on the same line
     (common when PDF pages are extracted as single long strings).
     """
     lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return ""
 
-    # Search from the end of the document backwards to find the *last*
-    # occurrence of a reference heading (avoids matching table of contents).
+    # Only search the document tail.  A contents-page heading must never cause
+    # the introduction and body to be submitted as bibliography entries.
+    tail_start_idx = int(len(lines) * (1 - REFERENCE_SECTION_TAIL_FRACTION))
     ref_start_idx = None
     ref_remainder = ""
-    for i in range(len(lines) - 1, -1, -1):
+    for i in range(len(lines) - 1, tail_start_idx - 1, -1):
         cleaned = _strip_page_number(lines[i]).strip()
-        lower = cleaned.lower()
-        # Check if the line starts with a reference heading
-        for heading in REFERENCE_HEADINGS:
-            if lower == heading or lower.startswith(heading + " "):
-                ref_start_idx = i
-                # Text after the heading on the same line
-                if lower.startswith(heading + " "):
-                    ref_remainder = cleaned[len(heading):].strip()
-                break
-        if ref_start_idx is not None:
-            break
+        match = REFERENCE_HEADING_RE.fullmatch(cleaned)
+        if match is None:
+            continue
+
+        remainder = match.group("remainder").strip()
+        # A non-empty remainder is allowed for PDF extraction only when it
+        # looks like a reference.  This rejects ordinary sentences beginning
+        # with phrases such as "References to...".
+        if remainder and not _looks_like_reference_start(remainder):
+            continue
+
+        ref_start_idx = i
+        ref_remainder = remainder
+        break
 
     if ref_start_idx is None:
         return ""
@@ -186,7 +205,8 @@ def find_reference_section(text: str) -> str:
         if stripped:
             parts.append(stripped)
 
-    return " ".join(parts)
+    # Keep entry boundaries for numbered reference lists.
+    return "\n".join(parts)
 
 
 def is_ref_start(line: str) -> bool:
@@ -241,12 +261,12 @@ def _split_harvard_references(text: str) -> list[str]:
 def extract_references(text: str) -> list[str]:
     """Extract references from text, handling Harvard and numbered formats."""
 
-    # First, try to isolate the reference section
+    # Never scan the document body: in-text author/year citations can otherwise
+    # be mistaken for bibliography entries.
     ref_text = find_reference_section(text)
 
     if not ref_text:
-        # Fall back: use the whole text and look for numbered references
-        ref_text = text
+        return []
 
     # Try Harvard-style splitting first
     references = _split_harvard_references(ref_text)
@@ -267,7 +287,7 @@ def extract_references(text: str) -> list[str]:
                 current_ref = line
         if current_ref:
             numbered_refs.append(current_ref.strip())
-        if len(numbered_refs) > len(references):
+        if numbered_refs and len(numbered_refs) >= len(references):
             references = numbered_refs
 
     # Filter out very short entries and duplicates
@@ -541,28 +561,34 @@ def index():
                         text = extract_text_from_docx(file_bytes)
 
                     references = extract_references(text)
-                    refs_to_lookup = references[:100]
-                    pending_results: list[ReferenceResult | None]
-                    pending_results = [None] * len(refs_to_lookup)
-                    with ThreadPoolExecutor(max_workers=10) as executor:
-                        future_to_idx = {
-                            executor.submit(lookup_crossref, ref): i
-                            for i, ref in enumerate(refs_to_lookup)
-                        }
-                        for future in as_completed(future_to_idx):
-                            idx = future_to_idx[future]
-                            try:
-                                pending_results[idx] = future.result()
-                            except Exception:
-                                pending_results[idx] = ReferenceResult(
-                                    reference=refs_to_lookup[idx], matched=False
-                                )
-                    results = [r for r in pending_results if r is not None]
+                    if not references:
+                        error = (
+                            "No References or Bibliography section was found "
+                            "near the end of this document."
+                        )
+                    else:
+                        refs_to_lookup = references[:100]
+                        pending_results: list[ReferenceResult | None]
+                        pending_results = [None] * len(refs_to_lookup)
+                        with ThreadPoolExecutor(max_workers=10) as executor:
+                            future_to_idx = {
+                                executor.submit(lookup_crossref, ref): i
+                                for i, ref in enumerate(refs_to_lookup)
+                            }
+                            for future in as_completed(future_to_idx):
+                                idx = future_to_idx[future]
+                                try:
+                                    pending_results[idx] = future.result()
+                                except Exception:
+                                    pending_results[idx] = ReferenceResult(
+                                        reference=refs_to_lookup[idx], matched=False
+                                    )
+                        results = [r for r in pending_results if r is not None]
 
-                    # Generate summary PDF
-                    report_pdf = generate_summary_pdf(results)
-                    download_id = str(uuid.uuid4())
-                    _store_report(download_id, report_pdf)
+                        # Generate summary PDF
+                        report_pdf = generate_summary_pdf(results)
+                        download_id = str(uuid.uuid4())
+                        _store_report(download_id, report_pdf)
 
                 except Exception as e:
                     error = f"Could not process this file: {e}"
