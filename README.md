@@ -2,12 +2,12 @@
 
 > **This project was vibe coded.** Built rapidly with AI-assisted development — expect rough edges, have fun, and contribute if you spot improvements!
 
-GhostCite is a local-first web app that checks whether the references in an academic PDF are real. Upload a document, and GhostCite will extract every reference it finds, look each one up on [Crossref](https://www.crossref.org/), and tell you which ones appear to be genuine and which might be fabricated or "hallucinated".
+GhostCite is a local-first web app that checks whether the references in an academic PDF or Word document are real. Upload a document, and GhostCite will extract every reference it finds, look each one up on [Crossref](https://www.crossref.org/), and tell you which ones appear to be genuine and which might be fabricated or "hallucinated".
 
 ## ✨ Features
 
 - **PDF & DOCX upload** — drag-and-drop or select a file (up to 20 MB) through a simple web UI.
-- **Automatic reference extraction** — detects the reference/bibliography section and parses individual entries, handling numbered, Harvard, and bracketed citation styles.
+- **Structure-aware reference extraction** — scores candidate reference sections by citation evidence rather than fixed document position; handles numbered, bracketed, bulleted, Harvard/APA, MLA-style, Unicode and institutional authors, large appendices, and Word references stored in tables or text boxes.
 - **Crossref verification** — queries the Crossref API for each reference and classifies it as ✅ Verified, ⚠️ Partial Match, or ❌ Not Found.
 - **Summary report** — download a standalone summary PDF listing every reference and its verification status.
 - **Fully local & private** — runs entirely on your machine via Docker. Your documents are never sent to a third-party service (only individual reference strings are queried against Crossref's public API).

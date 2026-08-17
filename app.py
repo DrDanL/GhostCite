@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 
 import requests
 from docx import Document as DocxDocument
+from docx.oxml.ns import qn
 from flask import Flask, render_template, request, send_file
 from pypdf import PdfReader
 from reportlab.lib.colors import Color
@@ -89,44 +90,88 @@ class ReferenceResult:
 
 DOI_PATTERN = re.compile(r"10\.\d{4,9}/[^\s,;\"'>\])}]+", re.IGNORECASE)
 
+REFERENCE_DATE_PATTERN = r"(?:\d{4}[a-z]?|n\.?d\.?|in\s+press|forthcoming)"
+BARE_REFERENCE_YEAR_PATTERN = r"(?:18|19|20|21)\d{2}[a-z]?"
+
 # Patterns that indicate the start of a new reference entry
 REF_START_PATTERNS = [
     re.compile(r"^\[\d+\]"),           # [1], [23]
-    re.compile(r"^\d{1,3}\.\s"),       # 1. , 23.
-    re.compile(r"^\d{1,3}\)\s"),       # 1) , 23)
+    re.compile(r"^\d{1,4}\.\s"),       # 1. , 1234.
+    re.compile(r"^\d{1,4}\)\s"),       # 1) , 1234)
+    re.compile(r"^[•▪◦‣]\s*"),          # common Word/PDF bullet markers
 ]
 
-# Harvard-style reference start: "Surname, I. ... (Year)"
-# Captures the position of author-year patterns for splitting.
+# Harvard/APA-style reference starts.  The name token deliberately uses
+# Unicode word characters and common apostrophe/dash variants so names such as
+# O'Neill, O’Neill, Haliloğlu and hyphenated surnames are not merged into the
+# preceding entry.
+# The ASCII-lowercase guard keeps prose fragments such as "Springer, pp."
+# from being mistaken for a new author while retaining Unicode name support.
+_NAME_TOKEN = r"(?![a-z])[^\W\d_][\w'’\-‐‑‒–—]*"
+_PERSON_AUTHOR_PREFIX = (
+    _NAME_TOKEN
+    + r"(?:\s+" + _NAME_TOKEN + r")*"
+    + r",\s*" + _NAME_TOKEN + r"\s*\."
+)
 _AUTHOR_YEAR_RE = re.compile(
     r"("
-    # Standard author: Surname, I. [co-authors] (Year) or Surname, Firstname. [co-authors] (Year)
-    # Allow multi-word surnames (e.g. "Haliloğlu Kahraman") and spaces before
-    # periods in initials (PDF extraction artifact: "Y ." instead of "Y.").
-    r"[A-Z][a-zA-Zà-öø-ÿÀ-ÖØ-Ý'\u011e\u011f\-]+"   # first part of surname
-    r"(?:\s+[A-Z][a-zA-Zà-öø-ÿÀ-ÖØ-Ý'\u011e\u011f\-]+)*"  # optional extra surname words
-    r",\s*[A-Z][a-zA-Zà-öø-ÿ]*\s*\."                 # initial (A .) or first name (Marcin.)
-    r"[^(]{0,300}?"
-    r"\(\d{4}[a-z]?(?:,\s*[A-Za-z]+\.?)?\)"           # (Year) or (2025, June)
+    + _PERSON_AUTHOR_PREFIX
+    # PDF extraction can wrap a long author list before the year.
+    + r"[^()]{0,600}?"
+    + r"\(" + REFERENCE_DATE_PATTERN + r"(?:,\s*[A-Za-z]+\.?)?\)"
     r"|"
-    # Organisation / institutional author (no initials): Org Name. (Year)
-    r"(?:HM\s+Government|NHS\s+England|Mental\s+Health\s+Foundation|World\s+Health\s+Organization)"
-    r"[^(]{0,100}?"
-    r"\(\d{4}[a-z]?\)"
+    # MLA/Chicago author-first entries often place a bare year later in the
+    # entry rather than immediately after the author in parentheses.
+    + _PERSON_AUTHOR_PREFIX
+    + r"[^()]{0,600}?\b" + BARE_REFERENCE_YEAR_PATTERN + r"\b"
+    r"|"
+    # Institutional authors are open-ended rather than a four-name allowlist.
+    # Optional acronyms cover forms such as "Agency Name (ANA) (2024)".
+    + _NAME_TOKEN
+    + r"(?:[ \t]+[^()\n]{1,120}?)?"
+    + r"(?:[ \t]+\([A-Z][A-Z0-9&.\-]{1,20}\))?"
+    + r"\.?[ \t]+\(" + REFERENCE_DATE_PATTERN + r"\)"
     r")"
 )
 
-# A heading is only treated as the start of the reference section when it is
-# in the final half of the document.  This avoids matching a table of contents
-# or prose such as "References to prior work..." near the beginning.
-REFERENCE_SECTION_TAIL_FRACTION = 0.5
 REFERENCE_HEADING_RE = re.compile(
     r"^(?:(?:section|chapter)\s+)?"
     r"(?:\d+(?:\.\d+)*[.)]?\s+)?"
-    r"(?P<heading>references|bibliography|works\s+cited|literature\s+cited|reference\s+list)"
+    r"(?P<heading>references(?:\s+and\s+notes)?|notes\s+and\s+references"
+    r"|bibliography|works\s+cited|literature\s+cited|cited\s+references"
+    r"|reference\s+list|sources\s+cited)"
     r"\s*(?:[:\-\u2013\u2014]\s*)?(?P<remainder>.*)$",
     re.IGNORECASE,
 )
+
+# These headings commonly follow a bibliography.  Stopping at them prevents
+# appendices, declarations and supplementary material from being submitted to
+# Crossref as if they were part of the final reference entry.
+REFERENCE_END_HEADING_RE = re.compile(
+    r"^(?:(?:section|chapter)\s+)?"
+    r"(?:\d+(?:\.\d+)*[.)]?\s+)?"
+    r"(?:appendix|appendices|supplement(?:ary|al)(?:\s+(?:material|materials|information))?"
+    r"|acknowledg(?:e)?ments?|author\s+contributions?|funding|declarations?"
+    r"|conflicts?\s+of\s+interest|competing\s+interests?)\b",
+    re.IGNORECASE,
+)
+
+# A contents-page "References" entry is often followed by a body heading.  It
+# should not win merely because author-year citations appear later in the body.
+BODY_SECTION_HEADING_RE = re.compile(
+    r"^(?:\d+(?:\.\d+)*[.)]?\s+)?"
+    r"(?:abstract|introduction|background|literature\s+review|methods?|methodology"
+    r"|materials?|results?|findings?|analysis|discussion|conclusions?|contents)\b",
+    re.IGNORECASE,
+)
+
+_W_P = qn("w:p")
+_W_TBL = qn("w:tbl")
+_W_TR = qn("w:tr")
+_W_TC = qn("w:tc")
+_W_T = qn("w:t")
+_W_TAB = qn("w:tab")
+_W_BREAKS = {qn("w:br"), qn("w:cr")}
 
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
@@ -134,15 +179,76 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
     return "\n".join((page.extract_text() or "") for page in reader.pages)
 
 
+def _ooxml_text(element) -> str:
+    """Return visible Word text, including hyperlinks and text boxes."""
+    parts: list[str] = []
+    for node in element.iter():
+        if node is not element and node.tag == _W_P and parts:
+            if parts[-1] != "\n":
+                parts.append("\n")
+        elif node.tag == _W_T and node.text:
+            parts.append(node.text)
+        elif node.tag == _W_TAB:
+            parts.append("\t")
+        elif node.tag in _W_BREAKS:
+            parts.append("\n")
+    return "".join(parts)
+
+
+def _normalise_extracted_block(text: str) -> list[str]:
+    """Normalise a Word block while preserving explicit/manual line breaks."""
+    lines: list[str] = []
+    for raw_line in text.splitlines() or [text]:
+        cells = [
+            re.sub(r"[ \t]+", " ", cell).strip()
+            for cell in raw_line.split("\t")
+        ]
+        cleaned = "\t".join(cell for cell in cells if cell)
+        if cleaned:
+            lines.append(cleaned)
+    return lines
+
+
+def _iter_docx_blocks(element):
+    """Yield paragraph and table-row text in document order.
+
+    Word can wrap body content in structured document tags, tracked insertions,
+    custom XML or other containers, so unrecognised containers are traversed
+    recursively instead of being discarded.
+    """
+    for child in element.iterchildren():
+        if child.tag == _W_P:
+            yield from _normalise_extracted_block(_ooxml_text(child))
+        elif child.tag == _W_TBL:
+            for row in child.iterchildren(_W_TR):
+                cells: list[str] = []
+                for cell in row.iterchildren(_W_TC):
+                    cell_text = re.sub(r"\s+", " ", _ooxml_text(cell)).strip()
+                    if cell_text:
+                        cells.append(cell_text)
+                if cells:
+                    yield "\t".join(cells)
+        else:
+            yield from _iter_docx_blocks(child)
+
+
 def extract_text_from_docx(file_bytes: bytes) -> str:
-    """Extract text from a Word (.docx) file."""
+    """Extract Word text in reading order, including tables and text boxes."""
     doc = DocxDocument(io.BytesIO(file_bytes))
-    return "\n".join(paragraph.text for paragraph in doc.paragraphs)
+    return "\n".join(_iter_docx_blocks(doc.element.body))
 
 
 def _strip_page_number(line: str) -> str:
     """Remove a leading page number like '51  ' from a line."""
     return re.sub(r"^\d{1,4}\s{2,}", "", line)
+
+
+def _clean_extracted_line(line: str) -> str:
+    """Remove extraction-only page furniture while preserving reference text."""
+    cleaned = _strip_page_number(line.strip()).strip()
+    if re.fullmatch(r"\d{1,4}", cleaned):
+        return ""
+    return cleaned
 
 
 def _looks_like_reference_start(text: str) -> bool:
@@ -154,59 +260,101 @@ def _looks_like_reference_start(text: str) -> bool:
     )
 
 
+def _reference_heading_match(line: str):
+    """Match a real heading, rejecting TOC entries such as 'References 53'."""
+    match = REFERENCE_HEADING_RE.fullmatch(_clean_extracted_line(line))
+    if match is None:
+        return None
+    remainder = match.group("remainder").strip()
+    if remainder and not _looks_like_reference_start(remainder):
+        return None
+    return match
+
+
+def _collect_reference_candidate(
+    lines: list[str], start_idx: int, remainder: str
+) -> list[str]:
+    """Collect one candidate section until the next structural boundary."""
+    parts = [remainder] if remainder else []
+    for line in lines[start_idx + 1:]:
+        cleaned = _clean_extracted_line(line)
+        if not cleaned:
+            continue
+        if REFERENCE_END_HEADING_RE.match(cleaned):
+            break
+        if _reference_heading_match(cleaned) is not None:
+            break
+        parts.append(cleaned)
+    return parts
+
+
+def _candidate_reference_score(parts: list[str], start_idx: int) -> tuple | None:
+    """Score a candidate using nearby citation evidence, not document position."""
+    if not parts:
+        return None
+
+    # Permit a short bibliography note, but reject a contents heading followed
+    # by Introduction/Methods/etc. before the first citation-shaped entry.
+    first_hit = None
+    for idx, line in enumerate(parts[:3]):
+        combined = " ".join(parts[idx:min(idx + 3, len(parts))])
+        if _looks_like_reference_start(line) or _looks_like_reference_start(combined):
+            first_hit = idx
+            break
+    if first_hit is None:
+        return None
+    if any(
+        BODY_SECTION_HEADING_RE.match(line)
+        and not _looks_like_reference_start(line)
+        for line in parts[:first_hit + 1]
+    ):
+        return None
+
+    hits = sum(1 for line in parts if _looks_like_reference_start(line))
+    doi_count = sum(len(DOI_PATTERN.findall(line)) for line in parts)
+    if hits == 0 and doi_count == 0:
+        return None
+
+    # Density defeats a clean "References" entry in a contents page followed
+    # by an entire chapter, while hit count favours the actual bibliography.
+    density = hits / max(1, len(parts))
+    quality = (
+        density * 100
+        + min(hits, 50) * 5
+        + min(doi_count, 50)
+        - first_hit * 25
+    )
+    return (quality, hits, density, doi_count, start_idx)
+
+
 def find_reference_section(text: str) -> str:
-    """Extract the reference section from the end of the document.
+    """Select the most reference-like section headed by a known label.
 
     Handles cases where the heading and references are on the same line
-    (common when PDF pages are extracted as single long strings).
+    (common in PDF extraction), tables, large post-reference appendices and
+    multiple heading-like entries such as a table of contents.
     """
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if not lines:
         return ""
 
-    # Only search the document tail.  A contents-page heading must never cause
-    # the introduction and body to be submitted as bibliography entries.
-    tail_start_idx = int(len(lines) * (1 - REFERENCE_SECTION_TAIL_FRACTION))
-    ref_start_idx = None
-    ref_remainder = ""
-    for i in range(len(lines) - 1, tail_start_idx - 1, -1):
-        cleaned = _strip_page_number(lines[i]).strip()
-        match = REFERENCE_HEADING_RE.fullmatch(cleaned)
+    candidates: list[tuple[tuple, list[str]]] = []
+    for idx, line in enumerate(lines):
+        match = _reference_heading_match(line)
         if match is None:
             continue
+        parts = _collect_reference_candidate(
+            lines, idx, match.group("remainder").strip()
+        )
+        score = _candidate_reference_score(parts, idx)
+        if score is not None:
+            candidates.append((score, parts))
 
-        remainder = match.group("remainder").strip()
-        # A non-empty remainder is allowed for PDF extraction only when it
-        # looks like a reference.  This rejects ordinary sentences beginning
-        # with phrases such as "References to...".
-        if remainder and not _looks_like_reference_start(remainder):
-            continue
-
-        ref_start_idx = i
-        ref_remainder = remainder
-        break
-
-    if ref_start_idx is None:
+    if not candidates:
         return ""
 
-    # Build the reference section text
-    parts: list[str] = []
-    if ref_remainder:
-        parts.append(ref_remainder)
-
-    # Collect subsequent lines until we hit appendices or end
-    appendix_pattern = re.compile(r"^\s*(?:\d{1,4}\s{2,})?(?:appendix|appendices)\b", re.IGNORECASE)
-    for line in lines[ref_start_idx + 1:]:
-        stripped = line.strip()
-        if appendix_pattern.match(stripped):
-            break
-        # Strip leading page numbers
-        stripped = _strip_page_number(stripped)
-        if stripped:
-            parts.append(stripped)
-
-    # Keep entry boundaries for numbered reference lists.
-    return "\n".join(parts)
+    _, best_parts = max(candidates, key=lambda candidate: candidate[0])
+    return "\n".join(best_parts)
 
 
 def is_ref_start(line: str) -> bool:
