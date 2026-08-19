@@ -55,6 +55,64 @@
         border-left: 4px solid #1a73e8; background: #e3f2fd;
       }
 
+      /* Uploaded document metadata */
+      .metadata-card {
+        margin: 1.5rem 0; padding: 1.25rem 1.5rem; background: #f7f9fc;
+        border: 1px solid #dce3ee; border-radius: 8px;
+      }
+      .metadata-card h2 { border: none; margin: 0 0 0.25rem; padding: 0; }
+      .metadata-intro { color: #667085; font-size: 0.85rem; margin: 0 0 1rem; }
+      .metadata-grid {
+        display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 0.7rem 1.25rem; margin: 0;
+      }
+      .metadata-item {
+        min-width: 0; padding-bottom: 0.45rem; border-bottom: 1px solid #e4e9f0;
+      }
+      .metadata-item dt {
+        color: #667085; font-size: 0.72rem; font-weight: bold;
+        letter-spacing: 0.03em; text-transform: uppercase;
+      }
+      .metadata-item dd {
+        margin: 0.15rem 0 0; overflow-wrap: anywhere; font-size: 0.9rem;
+      }
+      .metadata-item.manager-indicator {
+        grid-column: 1 / -1; padding: 0.7rem 0.8rem; border: 1px solid #c8d8f0;
+        border-radius: 5px; background: #eef4fc;
+      }
+      .signal-panel {
+        margin-top: 1.25rem; padding-top: 1rem; border-top: 2px solid #dce3ee;
+      }
+      .signal-panel h3 { margin: 0; color: #344054; }
+      .signal-note { margin: 0.25rem 0 0.8rem; color: #667085; font-size: 0.85rem; }
+      .signal-list { margin: 0; padding: 0; list-style: none; }
+      .signal-item {
+        margin-top: 0.65rem; padding: 0.75rem 0.9rem; background: #fff;
+        border: 1px solid #d0d5dd; border-left: 4px solid #667085; border-radius: 5px;
+      }
+      .signal-category {
+        display: inline-block; margin-bottom: 0.25rem; color: #344054;
+        font-size: 0.72rem; font-weight: bold; letter-spacing: 0.03em;
+        text-transform: uppercase;
+      }
+      .signal-description { font-size: 0.9rem; }
+      .signal-evidence {
+        margin-top: 0.25rem; color: #667085; font-family: ui-monospace, monospace;
+        font-size: 0.78rem; overflow-wrap: anywhere;
+      }
+      .signal-evidence-list {
+        margin: 0.55rem 0 0; padding-left: 1.6rem; color: #475467;
+        font-family: ui-monospace, monospace; font-size: 0.78rem;
+      }
+      .signal-evidence-list li {
+        margin-top: 0.35rem; padding-left: 0.2rem; overflow-wrap: anywhere;
+        white-space: pre-wrap;
+      }
+      .signal-empty {
+        margin: 0; padding: 0.7rem 0.8rem; background: #fff; border: 1px solid #d0d5dd;
+        border-radius: 5px; color: #667085; font-size: 0.85rem;
+      }
+
       /* Table */
       table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
       th, td { border: 1px solid #ddd; text-align: left; padding: 0.5rem; vertical-align: top; }
@@ -116,6 +174,45 @@
 
     {% if error %}
       <p class="error">⚠ {{ error }}</p>
+    {% endif %}
+
+    {% if document_metadata %}
+      <section class="metadata-card" aria-labelledby="document-metadata-heading">
+        <h2 id="document-metadata-heading">📄 Document metadata</h2>
+        <p class="metadata-intro">Properties embedded in the uploaded file. These values are self-reported by the file and may be missing, stale, or edited.</p>
+        <dl class="metadata-grid">
+          {% for label, value in document_metadata.display_items() %}
+            <div class="metadata-item {% if label == 'Reference manager indicators' %}manager-indicator{% endif %}">
+              <dt>{{ label }}</dt>
+              <dd>{{ value }}</dd>
+            </div>
+          {% endfor %}
+        </dl>
+        <div class="signal-panel">
+          <h3>🧭 Provenance and automation signals</h3>
+          <p class="signal-note">Observable file evidence only. GhostCite does not decide whether GenAI was used; a human must interpret every signal in context.</p>
+          {% if document_metadata.provenance_signals %}
+            <ul class="signal-list">
+              {% for signal in document_metadata.provenance_signals %}
+                <li class="signal-item">
+                  <div class="signal-category">{{ signal.category }}</div>
+                  <div class="signal-description">{{ signal.description }}</div>
+                  <div class="signal-evidence">Evidence: {{ signal.evidence }}</div>
+                  {% if signal.evidence_items %}
+                    <ol class="signal-evidence-list" aria-label="Full detected occurrence list">
+                      {% for item in signal.evidence_items %}
+                        <li>{{ item }}</li>
+                      {% endfor %}
+                    </ol>
+                  {% endif %}
+                </li>
+              {% endfor %}
+            </ul>
+          {% else %}
+            <p class="signal-empty">No additional provenance or automation markers were detected in the embedded file data. This does not indicate that GenAI was absent.</p>
+          {% endif %}
+        </div>
+      </section>
     {% endif %}
 
     {% if results %}

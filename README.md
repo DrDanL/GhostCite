@@ -7,6 +7,7 @@ GhostCite is a local-first web app that checks whether the references in an acad
 ## ✨ Features
 
 - **PDF & DOCX upload** — drag-and-drop or select a file (up to 20 MB) through a simple web UI.
+- **Document metadata and provenance signals** — reports embedded properties plus neutral, evidence-backed signals such as text below 2 pt, explicitly white text, GenAI product markers, C2PA/Content Credentials declarations, generator/conversion tools, tracked changes, comments, digital-signature parts, PDF revisions, Office add-ins, embedded attachments, and reference-manager indicators. PDF font-size checks use the effective rendered size after text/page transformations, preventing scaled `1 pt` storage values from producing false positives. Every detected sub-2-pt or white-text occurrence is listed with its location, formatting and full extracted text in both the web result and summary PDF. For PDFs it also surfaces trailer/document IDs, raw XMP edit history and custom fields, IPTC digital-source declarations, page geometry, annotations and reviewers, optional layers (including layers off by default), page-piece application data, form/signature metadata, viewer settings, document actions/scripts, and attachment properties. GhostCite never turns these signals into an AI verdict; human interpretation is always required.
 - **Structure-aware reference extraction** — scores candidate reference sections by citation evidence rather than fixed document position; handles numbered, bracketed, bulleted, Harvard/APA, MLA-style, Unicode and institutional authors, large appendices, and Word references stored in tables or text boxes.
 - **Crossref verification** — queries the Crossref API for each reference and classifies it as ✅ Verified, ⚠️ Partial Match, or ❌ Not Found.
 - **Summary report** — download a standalone summary PDF listing every reference and its verification status.
@@ -34,7 +35,8 @@ This builds the Docker image and starts the container. Once ready, open your bro
 2. Upload a PDF or DOCX file containing academic references.
 3. Wait for GhostCite to extract and verify the references (this may take a moment depending on the number of references).
 4. Review the results table showing each reference and its verification status.
-5. Download the **summary report** PDF listing each reference and its status.
+5. Review the document metadata and any embedded reference-manager indicators shown above the verification results.
+6. Download the **summary report** PDF, which includes the same metadata header and lists each reference and its status.
 
 ### Manual Docker commands
 
